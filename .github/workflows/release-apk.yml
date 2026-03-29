@@ -1,23 +1,58 @@
-name: Release (signed APK + Windows EXE)
+# Every tag v* produces ONE GitHub Release with exactly these two files:
+#   - careerforge-windows-amd64.exe
+#   - app-release.apk
+# The publish job runs only if both builds succeed.
+
+name: Release (APK + EXE)
 
 on:
   push:
     tags: ["v*"]
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  windows-exe:
+    name: Build Windows EXE
     runs-on: ubuntu-latest
-    env:
-      VERSION_NAME: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend & embed UI
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Build careerforge-windows-amd64.exe
+        run: |
+          go build -trimpath -ldflags="-s -w" -o careerforge-windows-amd64.exe ./cmd/careerforge
+          test -s careerforge-windows-amd64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: careerforge-windows-exe
+          path: careerforge-windows-amd64.exe
+          if-no-files-found: error
+
+  android-apk:
+    name: Build Android release APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
         with:
@@ -30,25 +65,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend deps (desktop embed)
+      - name: Install frontend & Capacitor assets
         working-directory: frontend
-        run: npm ci
-
-      - name: Build web for Go embed (same-origin API)
-        working-directory: frontend
-        run: npm run build
-
-      - name: Build Windows amd64 executable
-        run: |
-          go build -trimpath -ldflags="-s -w" -o careerforge-windows-amd64.exe ./cmd/careerforge
-
-      - name: Build web for Android + Capacitor sync
-        working-directory: frontend
-        run: npm run build:android && npx cap sync android
+        run: npm ci && npm run build:android && npx cap sync android
 
       - uses: android-actions/setup-android@v3
 
-      - name: Decode release keystore (optional Play-style signing)
+      - name: Optional Play Store signing (repo secrets)
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -65,17 +88,57 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
 
-      - name: Assemble release APK (signed — release key or debug cert fallback)
+      - name: assembleRelease
         working-directory: frontend/android
         env:
           ORG_GRADLE_PROJECT_versionCode: ${{ github.run_number }}
           ORG_GRADLE_PROJECT_versionName: ${{ github.ref_name }}
-        run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+        run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Assert APK on disk
+        run: |
+          APK="$GITHUB_WORKSPACE/frontend/android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          test -s "$APK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: careerforge-android-apk
+          path: frontend/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release (APK + EXE only)
+    needs: [windows-exe, android-apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: careerforge-windows-exe
+          path: release-assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: careerforge-android-apk
+          path: release-assets
+
+      - name: Hard require both files
+        run: |
+          ls -la release-assets
+          test -f release-assets/careerforge-windows-amd64.exe
+          test -s release-assets/careerforge-windows-amd64.exe
+          test -f release-assets/app-release.apk
+          test -s release-assets/app-release.apk
+
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
-            careerforge-windows-amd64.exe
-            frontend/android/app/build/outputs/apk/release/app-release.apk
+            release-assets/careerforge-windows-amd64.exe
+            release-assets/app-release.apk
           generate_release_notes: true
