@@ -9,3 +9,8 @@ For tagged releases with Android APK + Windows EXE, see [GitHub Releases](https:
 ## Auto-generated entries
 
 <!-- changelog-bot: entries appended below (newest first within each block) -->
+
+### 2026-03-29 08:01:36 UTC (push `2570ee8e862f306a341e651a5132be5fe435df84`)
+
+- \`2570ee8\` **ShiroOnigami23** (2026-03-29T13:31:25+05:30) — docs: MIT LICENSE, CHANGELOG + auto workflow; explain GitHub contributors
+
