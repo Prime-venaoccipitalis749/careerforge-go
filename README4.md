@@ -27,6 +27,8 @@
 
 Releases are created automatically when you push a semver tag: `v1.0.0`, `v0.2.3`, …
 
+**CI guarantee:** the publish step runs only after **both** jobs succeed and **fails the whole workflow** if either `careerforge-windows-amd64.exe` or `app-release.apk` is missing — you do not get a GitHub Release with only one asset.
+
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
