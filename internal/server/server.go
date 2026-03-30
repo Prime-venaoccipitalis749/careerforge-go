@@ -2,9 +2,13 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"sync"
 
 	"github.com/shiroonigami23-ui/careerforge-go/internal/db"
@@ -77,6 +82,9 @@ func (s *Server) Close() error { return s.db.Close() }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /auth/signup", s.handleAuthSignup)
+	mux.HandleFunc("POST /auth/login", s.handleAuthLogin)
+	mux.HandleFunc("POST /auth/google", s.handleAuthGoogle)
 	mux.HandleFunc("GET /files/", s.handleFiles)
 	mux.HandleFunc("POST /notifications/test-email", s.handleTestEmail)
 	mux.HandleFunc("GET /dashboard/", s.handleDashboard)
@@ -94,6 +102,160 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /", s.handleHealthOnly)
 	}
 	return cors(mux)
+}
+
+func (s *Server) handleAuthSignup(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	password := r.FormValue("password")
+	display := strings.TrimSpace(r.FormValue("display_name"))
+	if display == "" {
+		display = "User"
+	}
+	if email == "" {
+		writeJSON(w, map[string]any{"error": "email is required"})
+		return
+	}
+	if len(password) < 6 {
+		writeJSON(w, map[string]any{"error": "password must be at least 6 characters"})
+		return
+	}
+
+	var exists string
+	err := s.db.QueryRow(`SELECT user_id FROM users WHERE email = ?`, email).Scan(&exists)
+	if err == nil {
+		writeJSON(w, map[string]any{"error": "email already registered"})
+		return
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userID := "u_" + randomHex(12)
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, err = s.db.Exec(`
+INSERT INTO users (user_id, email, display_name, password_hash, auth_provider)
+VALUES (?, ?, ?, ?, 'email')`, userID, email, display, passwordHash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"user_id":       userID,
+		"email":         email,
+		"display_name":  display,
+		"auth_provider": "email",
+	})
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	password := r.FormValue("password")
+	if email == "" || password == "" {
+		writeJSON(w, map[string]any{"error": "email and password are required"})
+		return
+	}
+	var userID, display, hash, provider sql.NullString
+	err := s.db.QueryRow(`
+SELECT user_id, display_name, password_hash, auth_provider
+FROM users WHERE email = ?`, email).Scan(&userID, &display, &hash, &provider)
+	if err != nil {
+		writeJSON(w, map[string]any{"error": "invalid email or password"})
+		return
+	}
+	if !hash.Valid || hash.String == "" || !verifyPassword(hash.String, password) {
+		writeJSON(w, map[string]any{"error": "invalid email or password"})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"user_id":       userID.String,
+		"email":         email,
+		"display_name":  display.String,
+		"auth_provider": provider.String,
+	})
+}
+
+func (s *Server) handleAuthGoogle(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	cred := strings.TrimSpace(r.FormValue("credential"))
+	if cred == "" {
+		writeJSON(w, map[string]any{"error": "credential is required"})
+		return
+	}
+	sub, email, name, err := parseGoogleCredential(cred)
+	if err != nil {
+		writeJSON(w, map[string]any{"error": "invalid google credential"})
+		return
+	}
+	if name == "" {
+		name = "Google User"
+	}
+
+	var userID, display sql.NullString
+	find := s.db.QueryRow(`SELECT user_id, display_name FROM users WHERE google_sub = ?`, sub)
+	err = find.Scan(&userID, &display)
+	if err == nil {
+		if email != "" {
+			_, _ = s.db.Exec(`UPDATE users SET email = COALESCE(?, email), updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`, email, userID.String)
+		}
+		writeJSON(w, map[string]any{
+			"user_id":       userID.String,
+			"email":         email,
+			"display_name":  firstNonEmpty(display.String, name),
+			"auth_provider": "google",
+		})
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if email != "" {
+		row := s.db.QueryRow(`SELECT user_id, display_name FROM users WHERE email = ?`, email)
+		if scanErr := row.Scan(&userID, &display); scanErr == nil {
+			_, _ = s.db.Exec(`
+UPDATE users SET google_sub = ?, auth_provider = 'google', display_name = COALESCE(NULLIF(display_name,''), ?), updated_at = CURRENT_TIMESTAMP
+WHERE user_id = ?`, sub, name, userID.String)
+			writeJSON(w, map[string]any{
+				"user_id":       userID.String,
+				"email":         email,
+				"display_name":  firstNonEmpty(display.String, name),
+				"auth_provider": "google",
+			})
+			return
+		}
+	}
+
+	userID = sql.NullString{String: "u_" + randomHex(12), Valid: true}
+	_, err = s.db.Exec(`
+INSERT INTO users (user_id, email, display_name, auth_provider, google_sub)
+VALUES (?, ?, ?, 'google', ?)`, userID.String, nullIfEmpty(email), name, sub)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"user_id":       userID.String,
+		"email":         email,
+		"display_name":  name,
+		"auth_provider": "google",
+	})
 }
 
 func (s *Server) handleHealthOnly(w http.ResponseWriter, r *http.Request) {
@@ -708,4 +870,77 @@ func randomHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func hashPassword(password string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append(salt, []byte(password)...))
+	return "v1$" + hex.EncodeToString(salt) + "$" + hex.EncodeToString(sum[:]), nil
+}
+
+func verifyPassword(stored, password string) bool {
+	parts := strings.Split(stored, "$")
+	if len(parts) != 3 || parts[0] != "v1" {
+		return false
+	}
+	salt, err := hex.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	want, err := hex.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	got := sha256.Sum256(append(salt, []byte(password)...))
+	if len(want) != len(got) {
+		return false
+	}
+	return subtle.ConstantTimeCompare(want, got[:]) == 1
+}
+
+func parseGoogleCredential(credential string) (sub, email, name string, err error) {
+	parts := strings.Split(credential, ".")
+	if len(parts) < 2 {
+		return "", "", "", errors.New("invalid jwt")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", "", "", err
+	}
+	var claims struct {
+		Sub   string `json:"sub"`
+		Email string `json:"email"`
+		Name  string `json:"name"`
+		Exp   int64  `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", "", "", err
+	}
+	if claims.Sub == "" {
+		return "", "", "", errors.New("missing sub")
+	}
+	if claims.Exp > 0 && time.Now().Unix() > claims.Exp {
+		return "", "", "", errors.New("expired token")
+	}
+	return claims.Sub, strings.ToLower(strings.TrimSpace(claims.Email)), strings.TrimSpace(claims.Name), nil
+}
+
+func nullIfEmpty(v string) any {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

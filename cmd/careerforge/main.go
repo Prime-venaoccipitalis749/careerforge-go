@@ -22,7 +22,7 @@ func main() {
 	if r := os.Getenv("CAREERFORGE_ROOT"); r != "" {
 		root = r
 	}
-	faqPath := filepath.Join(root, "knowledge", "faq_responses.json")
+	faqPath := filepath.Join(root, "internal", "faq", "faq_responses.json")
 	dist, err := fs.Sub(web, "web/dist")
 	if err != nil {
 		log.Fatal("embed: run `cd frontend && npm run build` first:", err)

@@ -39,7 +39,7 @@ jobs:
 
       - name: Build careerforge-windows-amd64.exe
         run: |
-          go build -trimpath -ldflags="-s -w" -o careerforge-windows-amd64.exe ./cmd/careerforge
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o careerforge-windows-amd64.exe ./cmd/careerforge
           test -s careerforge-windows-amd64.exe
 
       - uses: actions/upload-artifact@v4
