@@ -19,3 +19,8 @@ For tagged releases with Android APK + Windows EXE, see [GitHub Releases](https:
 
 - \`d1ab13f\` **ShiroOnigami23** (2026-03-30T22:16:59+05:30) — fix_restore_app_flows_auth_and_local_mode
 
+
+### 2026-03-30 16:56:39 UTC (push `98f30b6911c7305b3630c685721fbf4c13dfb54e`)
+
+- \`98f30b6\` **ShiroOnigami23** (2026-03-30T22:26:25+05:30) — fix_profile_tab_blank_screen_and_not_found_handling
+
